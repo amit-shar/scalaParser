@@ -1,8 +1,5 @@
 package com
 
-
-import org.scalastyle.{PositionError, ScalariformChecker, ScalastyleError}
-
 import scalariform.lexer.ScalaLexer
 import scalariform.parser._
 import scalariform.lexer.Token
@@ -15,46 +12,19 @@ object Test {
 
     val s =
       scala.io.Source.fromFile("src/main/resources/Example.scala").mkString
-
-
-//    val s =
-//      """
-//        |package foobar
-//        |import java.util._
-//        |import sun.com.foobar
-//        |import sun._
-//        |
-//        |class foobar {
-//        |  val MyField1 = new Foobar("one")
-//        |  var MyField2 = 2
-//        |  val MyField3
-//        |  var MyField4
-//        |  val myField51; val MyField52 = 52
-//        |  var myField61; var MyField62 = 62
-//        |}
-//      """.stripMargin
     val tokens = ScalaLexer.tokenise(s)
     val scalaParser = new ScalaParser(tokens.toArray)
     val cu = scalaParser.safeParse(scalaParser.compilationUnitOrScript)
-//    val astList = cu.get.immediateChildren(0)
-
+    //    val astList = cu.get.immediateChildren(0)
     val fieldNamesChecker = new FieldNamesChecker
 
     val illegalImportsChecker = new IllegalImportsChecker
-    illegalImportsChecker.verify(cu.get)
-//    fieldNamesChecker.verify(cu.get)
-    //    println(localvisit(astList))
-    //  println(cu.get.immediateChildren(0).immediateChildren.toList.map(a => getSource(a)))
-    //  getSource(cu.get)
+    val imports = illegalImportsChecker.verify(cu.get)
+
+    println(imports)
+    println(fieldNamesChecker.verify(cu.get))
   }
 
-  //  case class TmplClazz(t: TmplDef, subs: List[TmplClazz]) extends TreeVisit[TmplClazz]
-  //  private def localvisit1(ast: Any): ListType = ast match {
-  //    case t: TmplDef     => List(TmplClazz(Some(t.name.getText), Some(t.name.startIndex),
-  //      localvisit(t.templateBodyOption)))
-  //    case t: FunDefOrDcl => List(FunDefOrDclClazz(method(t), Some(t.nameToken.startIndex), localvisit(t.localDef)))
-  //    case t: Any         => visit(t, localvisit)
-  //  }
   private def localvisit(ast: Any): List[String] = ast match {
     case t: ImportClause => List(t.importExpr.toString) ++ localvisit(t.importExpr)
     case t: TmplDef => List(t.name.getText) ++ localvisit(t.templateBodyOption)
@@ -62,28 +32,21 @@ object Test {
     case t: Any => visit(t, localvisit)
   }
 
-  abstract class AbstractImportChecker extends ScalariformChecker {
+  abstract class AbstractImportChecker {
+    var parameters = Map[String, String]();
+
     case class ImportClauseVisit(t: ImportClause, importExpr: List[ImportClauseVisit], otherImportExprs: List[ImportClauseVisit]);
 
-    def verify(ast: CompilationUnit): List[ScalastyleError] = {
-      init()
-
-      val it = for {
-        t <- localvisit(ast.immediateChildren);
-        f <- traverse(t)
-      } yield {
-          println("imports " + imports(t))
-          PositionError(t.t.firstToken.offset)
-        }
-
-      it.toList
+    def verify(ast: CompilationUnit): List[String] = {
+      val it = for {t <- localvisit(ast.immediateChildren); f <- traverse(t)} yield {
+        imports(t).mkString
+      }
+      it
     }
-
-    protected def init(): Unit = {}
 
     private[this] def traverse(t: ImportClauseVisit): List[ImportClauseVisit] = {
       val l = t.importExpr.map(traverse(_)).flatten ::: t.otherImportExprs.map(traverse(_)).flatten
-      if (matches(t)) t :: l else l
+      t :: l
     }
 
     private[this] def imports(tokens: List[Token]): String = {
@@ -105,64 +68,31 @@ object Test {
       }
     }
 
-    def matches(t: ImportClauseVisit): Boolean
-
     private[this] def localvisit(ast: Any): List[ImportClauseVisit] = ast match {
       case t: ImportClause => List(ImportClauseVisit(t, localvisit(t.importExpr), localvisit(t.otherImportExprs)))
+      case t: FunDefOrDcl =>
+        println(t)
+        visit(t, localvisit)
       case t: Any => visit(t, localvisit)
     }
   }
 
   class IllegalImportsChecker extends AbstractImportChecker {
-    val errorKey = "illegal.imports"
-
-    val DefaultIllegalImports = "sun._"
-    var illegalImportsList: List[String] = _
-    var exemptImportsList: List[String] = _
-
-    // sun._ => sun\.
-    // sun.com.foobar => sun\.com\.foobar
-    private def toMatchList(s: String) = {
-      s.trim().split(" *, *").map(s => s.replaceAll("_$", "")).toList
-    }
-
-    override protected def init() = {
-      illegalImportsList = toMatchList(getString("illegalImports", DefaultIllegalImports))
-      exemptImportsList = toMatchList(getString("exemptImports", ""))
-    }
-
-    def matches(t: ImportClauseVisit): Boolean = {
-      val list = imports(t)
-      println(list.mkString)
-      val revisedList = list diff exemptImportsList
-      illegalImportsList.exists(ill => revisedList.exists(_.startsWith(ill)))
-    }
   }
 
-  class FieldNamesChecker extends ScalariformChecker {
-    val DefaultRegex = "^[a-z][A-Za-z0-9]*$"
-    val errorKey = "field.name"
+  class FieldNamesChecker {
 
     import scalariform.lexer.Tokens._
 
-    def verify(ast: CompilationUnit): List[ScalastyleError] = {
-      val regexString = getString("regex", DefaultRegex)
-      val regex = regexString.r
-
+    def verify(ast: CompilationUnit): List[String] = {
       val it = for {List(left, right) <- ast.tokens.sliding(2)
                     if (left.tokenType == VAL || left.tokenType == VAR)}
         yield {
-          println(right.getText)
-        PositionError(right.offset, List(regexString))
-      }
-
-      println(it.toList)
+          right.getText
+        }
       it.toList
     }
   }
-
-
-
 
   def visit[T](ast: Any, visitfn: (Any) => List[T]): List[T] = ast match {
     case a: AstNode => visitfn(a.immediateChildren)
